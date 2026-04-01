@@ -1,0 +1,29 @@
+src/shared/resolve-feynman-integration.test.ts
+  dfe27b80727b7065 1-12
+package.json
+  dfe27b80727b7065 46-48
+src/shared/resolve-feynman.test.ts
+  dfe27b80727b7065 1-44
+src/shared/resolve-feynman.ts
+  dfe27b80727b7065 8-21,96-106,110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "d9c2b181052ec0af864aa70b83084bec661075ec",
+  "prompts": {
+    "dfe27b80727b7065": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e275846b-a794-4bc2-b303-d5734b0183fa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 85,
+      "overriden_lines": 0
+    }
+  }
+}
