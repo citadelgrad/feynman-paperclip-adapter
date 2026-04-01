@@ -8,7 +8,7 @@ This adapter lets Paperclip orchestrate Feynman as an agent employee. When Paper
 
 1. Resolves the local Feynman installation
 2. Loads Feynman's system prompt, research extensions, prompt templates, and skills
-3. Spawns Pi (Feynman's underlying runtime) in RPC mode with Feynman's full configuration
+3. Spawns Pi (Feynman's underlying runtime) in JSON mode with Feynman's full configuration
 4. Streams JSONL events back to Paperclip for the dashboard transcript
 5. Persists sessions across heartbeats for multi-turn research workflows
 
@@ -38,7 +38,7 @@ Using `pi_local` directly would run a plain Pi agent without any of Feynman's re
 | Agent config dir | `~/.pi/agent/` | `~/.feynman/agent/` |
 | Model auth | Pi's auth config | Feynman's auth config (`~/.feynman/agent/auth.json`) |
 
-The JSONL protocol, session format, and output parsing are identical since both use Pi's RPC mode.
+The JSONL protocol, session format, and output parsing are still compatible with Pi, but this adapter now launches Pi in JSON mode so Paperclip runs complete reliably under `runChildProcess()`.
 
 ## Prerequisites
 
@@ -117,12 +117,13 @@ It extracts `$ROOT` and validates the expected structure:
 
 ### Execution
 
-The adapter spawns Pi directly (not the `feynman` binary, which doesn't support `--mode rpc`):
+The adapter spawns Pi directly (not the `feynman` binary, which doesn't support the Paperclip launch contract here):
 
 ```sh
 $ROOT/node/bin/node \
   $ROOT/app/node_modules/@mariozechner/pi-coding-agent/dist/cli.js \
-  --mode rpc \
+  --mode json \
+  -p "<Paperclip task prompt>" \
   --extension $ROOT/app/extensions/research-tools.ts \
   --prompt-template $ROOT/app/prompts/ \
   --append-system-prompt "<Paperclip context>" \
@@ -146,6 +147,19 @@ PAPERCLIP_API_KEY=<token>
 ### Session Continuity
 
 Sessions are stored in `~/.feynman/paperclips/` as JSONL files. When Paperclip resumes a heartbeat, the adapter passes the previous session file to Pi via `--session`, allowing multi-turn research workflows to continue where they left off.
+
+### Working directory selection
+
+If Paperclip only has an `agent_home` fallback workspace, the adapter now tries to infer the real repo cwd from `instructionsFilePath`. This is important for layouts where agent instructions live outside the repo in a sibling `agents/` directory, such as:
+
+- `.../SMB-AI-Search-Monitor/agents/feynman/AGENTS.md`
+- `.../SMB-AI-Search-Monitor/smb-ai-search-monitor`
+
+In that layout the adapter will prefer the actual repo root so relative references in the instructions file resolve correctly.
+
+### Known extension issue on macOS
+
+On Scott's mac, `@samfp/pi-memory` works after rebuilding `better-sqlite3` with Feynman's bundled Node/npm, but `@kaiserlich-dev/pi-session-search` is currently broken upstream because the installed package is missing local TS files such as `./types`. If you see clean adapter execution but startup noise from `pi-session-search`, disable that package in `~/.feynman/agent/settings.json` until the upstream package is fixed.
 
 ## Package Exports
 
