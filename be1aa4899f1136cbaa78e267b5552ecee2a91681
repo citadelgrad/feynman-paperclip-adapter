@@ -1,0 +1,27 @@
+src/shared/resolve-feynman.ts
+  fa5e775c0453af2d 28-67,71-72,101,108-109,111
+.gitignore
+  fa5e775c0453af2d 1-2
+src/server/models.ts
+  fa5e775c0453af2d 153-156,196-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.23",
+  "base_commit_sha": "be1aa4899f1136cbaa78e267b5552ecee2a91681",
+  "prompts": {
+    "fa5e775c0453af2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "781cef4e-2475-42fd-9789-dacbad45e20a",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Scott Nixon <citadelgrad@gmail.com>",
+      "messages": [],
+      "total_additions": 55,
+      "total_deletions": 5,
+      "accepted_lines": 55,
+      "overriden_lines": 0
+    }
+  }
+}
