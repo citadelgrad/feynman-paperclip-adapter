@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/scottnixonjr/feynman-paperclip-adapter.git"
+    "url": "https://github.com/citadelgrad/feynman-paperclip-adapter.git"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -43,7 +43,9 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@paperclipai/adapter-utils": "^0.3.0",
@@ -51,6 +53,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.2"
   }
 }

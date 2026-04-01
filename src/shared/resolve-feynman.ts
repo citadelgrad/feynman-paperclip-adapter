@@ -5,6 +5,20 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Prepend common user binary directories to PATH if they're not already present.
+ * Launchd and other service managers typically omit directories like ~/.local/bin.
+ */
+export function augmentPathForUserBins(currentPath: string, homedir: string): string {
+  const dirs = currentPath.split(path.delimiter);
+  const userBinDirs = [
+    path.join(homedir, ".local", "bin"),
+    path.join(homedir, "bin"),
+  ].filter((d) => !dirs.includes(d));
+  if (userBinDirs.length === 0) return currentPath;
+  return [...userBinDirs, currentPath].join(path.delimiter);
+}
+
 export interface FeynmanInstallation {
   /** Feynman installation root (contains node/, app/) */
   feynmanRoot: string;
@@ -79,11 +93,21 @@ export async function resolveFeynman(
   feynmanCommand = "feynman",
   env?: Record<string, string>,
 ): Promise<FeynmanInstallation> {
-  // Step 1: Find the feynman binary via `which`
+  // Step 1: Find the feynman binary via `which`.
+  // Augment PATH with common user binary directories (e.g. ~/.local/bin)
+  // that launchd and other service managers typically omit.
+  const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const mergedEnv: Record<string, string | undefined> = env
+    ? { ...process.env, ...env }
+    : { ...process.env };
+  if (homedir && mergedEnv.PATH) {
+    mergedEnv.PATH = augmentPathForUserBins(mergedEnv.PATH, homedir);
+  }
+
   let binaryPath: string;
   try {
     const { stdout } = await execFileAsync("which", [feynmanCommand], {
-      env: env ? { ...process.env, ...env } : undefined,
+      env: mergedEnv,
     });
     binaryPath = stdout.trim();
   } catch {
