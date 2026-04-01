@@ -17,7 +17,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { ensureFeynmanModelConfiguredAndAvailable } from "./models.js";
-import { resolveFeynman } from "../shared/resolve-feynman.js";
+import { resolveFeynman, type FeynmanInstallation } from "../shared/resolve-feynman.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const PAPERCLIP_SKILLS_CANDIDATES = [
@@ -105,6 +105,100 @@ function buildSessionPath(agentId: string, timestamp: string): string {
   return path.join(FEYNMAN_SESSIONS_DIR, `${safeTimestamp}-${agentId}.jsonl`);
 }
 
+async function pathExists(targetPath: string): Promise<boolean> {
+  return fs.access(targetPath).then(
+    () => true,
+    () => false,
+  );
+}
+
+async function findRepoRoot(startDir: string): Promise<string | null> {
+  const markers = [".git", "pnpm-workspace.yaml", "package.json", "bun.lock", "bun.lockb"];
+  let current = path.resolve(startDir);
+  while (true) {
+    for (const marker of markers) {
+      if (await pathExists(path.join(current, marker))) {
+        return current;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+async function findSingleNestedRepoRoot(containerDir: string): Promise<string | null> {
+  const entries = await fs.readdir(containerDir, { withFileTypes: true }).catch(() => []);
+  const repoCandidates: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(containerDir, entry.name);
+    const repoRoot = await findRepoRoot(candidate);
+    if (repoRoot && path.resolve(repoRoot) === path.resolve(candidate)) {
+      repoCandidates.push(candidate);
+    }
+  }
+  if (repoCandidates.length === 1) return repoCandidates[0];
+  return null;
+}
+
+export async function inferCwdFromInstructionsFilePath(instructionsFilePath: string): Promise<string | null> {
+  const trimmed = instructionsFilePath.trim();
+  if (!trimmed) return null;
+
+  const resolvedPath = path.resolve(trimmed);
+  const stats = await fs.stat(resolvedPath).catch(() => null);
+  if (!stats?.isFile()) return null;
+
+  const instructionsDir = path.dirname(resolvedPath);
+  const repoRoot = await findRepoRoot(instructionsDir);
+  if (repoRoot) return path.resolve(repoRoot);
+
+  const agentsDir = path.dirname(instructionsDir);
+  if (path.basename(agentsDir) !== "agents") return null;
+
+  const workspaceContainer = path.dirname(agentsDir);
+  const nestedRepoRoot = await findSingleNestedRepoRoot(workspaceContainer);
+  return nestedRepoRoot ? path.resolve(nestedRepoRoot) : null;
+}
+
+/** Exported for testing. Builds the Pi CLI args array. */
+export function _buildArgs(opts: {
+  installation: FeynmanInstallation;
+  sessionFile: string;
+  systemPromptExtension: string;
+  userPrompt: string;
+  provider: string;
+  modelId: string;
+  thinking: string;
+  extraArgs: string[];
+}): string[] {
+  const args: string[] = [opts.installation.piCli];
+
+  // Use JSON mode so Pi runs the prompt to completion.
+  // RPC mode exits when stdin closes, which runChildProcess does immediately.
+  args.push("--mode", "json");
+  args.push("-p", opts.userPrompt);
+
+  // Feynman-specific: load extension and prompt templates
+  args.push("--extension", opts.installation.extensionPath);
+  args.push("--prompt-template", opts.installation.promptTemplatePath);
+
+  // Append Paperclip system prompt extension (Feynman's SYSTEM.md is loaded by PI_CODING_AGENT_DIR)
+  args.push("--append-system-prompt", opts.systemPromptExtension);
+
+  if (opts.provider) args.push("--provider", opts.provider);
+  if (opts.modelId) args.push("--model", opts.modelId);
+  if (opts.thinking) args.push("--thinking", opts.thinking);
+
+  args.push("--tools", "read,bash,edit,write,grep,find,ls");
+  args.push("--session", opts.sessionFile);
+
+  if (opts.extraArgs.length > 0) args.push(...opts.extraArgs);
+
+  return args;
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, authToken } = ctx;
 
@@ -118,6 +212,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const provider = parseModelProvider(model);
   const modelId = parseModelId(model);
+  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  const inferredInstructionsCwd = await inferCwdFromInstructionsFilePath(instructionsFilePath);
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -132,9 +228,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     : [];
   const configuredCwd = asString(config.cwd, "");
   const useConfiguredInsteadOfAgentHome =
-    workspaceSource === "agent_home" && configuredCwd.length > 0;
+    workspaceSource === "agent_home" && (configuredCwd.length > 0 || inferredInstructionsCwd !== null);
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
-  const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
+  const cwd = effectiveWorkspaceCwd || configuredCwd || inferredInstructionsCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
 
   // Resolve the Feynman installation
@@ -267,7 +363,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
 
   // Handle instructions file and build system prompt extension
-  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const resolvedInstructionsFilePath = instructionsFilePath
     ? path.resolve(cwd, instructionsFilePath)
     : "";
@@ -333,38 +428,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ];
   })();
 
-  const buildArgs = (sessionFile: string): string[] => {
-    const args: string[] = [installation.piCli];
-
-    // Use RPC mode for proper lifecycle management
-    args.push("--mode", "rpc");
-
-    // Feynman-specific: load extension and prompt templates
-    args.push("--extension", installation.extensionPath);
-    args.push("--prompt-template", installation.promptTemplatePath);
-
-    // Append Paperclip system prompt extension (Feynman's SYSTEM.md is loaded by PI_CODING_AGENT_DIR)
-    args.push("--append-system-prompt", renderedSystemPromptExtension);
-
-    if (provider) args.push("--provider", provider);
-    if (modelId) args.push("--model", modelId);
-    if (thinking) args.push("--thinking", thinking);
-
-    args.push("--tools", "read,bash,edit,write,grep,find,ls");
-    args.push("--session", sessionFile);
-
-    if (extraArgs.length > 0) args.push(...extraArgs);
-
-    return args;
-  };
-
-  const buildRpcStdin = (): string => {
-    const promptCommand = {
-      type: "prompt",
-      message: userPrompt,
-    };
-    return JSON.stringify(promptCommand) + "\n";
-  };
+  const buildArgs = (sessionFile: string): string[] =>
+    _buildArgs({
+      installation,
+      sessionFile,
+      systemPromptExtension: renderedSystemPromptExtension,
+      userPrompt,
+      provider: provider ?? "",
+      modelId: modelId ?? "",
+      thinking,
+      extraArgs,
+    });
 
   const runAttempt = async (sessionFile: string) => {
     const args = buildArgs(sessionFile);
@@ -411,7 +485,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       timeoutSec,
       graceSec,
       onLog: bufferedOnLog,
-      stdin: buildRpcStdin(),
     });
 
     if (stdoutBuffer) {
